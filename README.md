@@ -21,6 +21,7 @@ The first run only records existing topics (no spam). After that, each new topic
 |---|---|---|
 | `DISCORD_WEBHOOK_URL` | – | required |
 | `POLL_INTERVAL` | `120` | seconds between checks |
+| `EXCLUDE_KEYWORDS` | `private` | comma-separated; topics whose title contains any (case-insensitive) are not sent |
 | `STATE_FILE` | `seen.json` | where seen topic IDs are stored |
 
 `python bot.py --once` does a single check and exits (handy for cron / Task Scheduler).

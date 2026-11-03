@@ -14,6 +14,7 @@ CATEGORY_URL = f"{BASE}/c/marketplace/character-bazaar/60.json"
 WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
 INTERVAL = int(os.environ.get("POLL_INTERVAL", "120"))
 STATE_FILE = Path(os.environ.get("STATE_FILE", "seen.json"))
+EXCLUDE = [k.strip().lower() for k in os.environ.get("EXCLUDE_KEYWORDS", "private").split(",") if k.strip()]
 HEADERS = {"User-Agent": "eve-bazaar-bot/1.0 (+discord notifier)"}
 
 
@@ -76,6 +77,11 @@ def check_once():
         return
     new = sorted((t for t in topics if t["id"] not in seen), key=lambda t: t["created_at"])
     for t in new:
+        if any(k in t["title"].lower() for k in EXCLUDE):
+            seen.add(t["id"])
+            save_seen(seen)
+            print(f"Skipped (excluded keyword): {t['title']}")
+            continue
         notify(t)
         seen.add(t["id"])
         save_seen(seen)  # save per topic so a crash never causes duplicates
