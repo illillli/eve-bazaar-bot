@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+    inputs:
+      preview:
+        description: "Post the newest topic once to preview the style (seen.json is not changed)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -25,6 +30,7 @@ jobs:
       - run: python bot.py --once
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          PREVIEW: ${{ inputs.preview && '1' || '' }}
       - name: Save seen topics
         run: |
           if [ -n "$(git status --porcelain seen.json)" ]; then

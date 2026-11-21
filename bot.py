@@ -34,37 +34,126 @@ def fetch_topics():
     return [t for t in r.json()["topic_list"]["topics"] if not t.get("pinned")]
 
 
+CHAR_ID_PATTERNS = [
+    r"qsna\.eu/eve/characters/(\d+)",
+    r"evewho\.com/character/(\d+)",
+    r"zkillboard\.com/character/(\d+)",
+    r"images\.evetech\.net/characters/(\d+)",
+]
+
+
 def fetch_first_post(topic_id):
-    """Return (author, plain-text body) of the topic's first post, best effort."""
+    """Return the topic's first post as a dict (username, name, avatar, text, char_id), best effort."""
     try:
         r = requests.get(f"{BASE}/t/{topic_id}.json", headers=HEADERS, timeout=30)
         r.raise_for_status()
         post = r.json()["post_stream"]["posts"][0]
-        text = re.sub(r"<[^>]+>", " ", post["cooked"])
-        text = re.sub(r"\s+", " ", html.unescape(text)).strip()
-        return post.get("username", ""), text
     except Exception as e:
         print(f"first-post fetch failed for {topic_id}: {e}", file=sys.stderr)
-        return "", ""
+        return {}
+    cooked = post.get("cooked", "")
+    char_id = next((m.group(1) for p in CHAR_ID_PATTERNS if (m := re.search(p, cooked))), None)
+    # 連結預覽卡（onebox）的文字是別的網站的介紹，不算內文
+    body = re.sub(r"<aside class=\"onebox.*?</aside>", " ", cooked, flags=re.S)
+    body = re.sub(r"<br\s*/?>|</p>|</li>", "\n", body)
+    body = re.sub(r"<[^>]+>", " ", body)
+    body = html.unescape(body)
+    body = "\n".join(re.sub(r"[ 	]+", " ", line).strip() for line in body.splitlines())
+    body = re.sub(r"\n{2,}", "\n", body).strip()
+    avatar = post.get("avatar_template", "").replace("{size}", "96")
+    if avatar.startswith("/"):
+        avatar = BASE + avatar
+    return {
+        "username": post.get("username", ""),
+        "name": post.get("name") or post.get("username", ""),
+        "avatar": avatar,
+        "text": body,
+        "char_id": char_id,
+    }
 
 
-def notify(topic):
-    author, body = fetch_first_post(topic["id"])
+def post_kind(title):
+    """從標題判斷是出售、收購還是拍賣。"""
+    t = title.lower()
+    if re.search(r"\bwts\b|for sale|selling", t):
+        return "💰 出售", 0x2ECC71
+    if re.search(r"\bwtb\b|buying|looking for", t):
+        return "🛒 收購", 0xE67E22
+    if re.search(r"\bwta\b|auction", t):
+        return "🔨 拍賣", 0x9B59B6
+    if re.search(r"\bsold\b|closed", t):
+        return "✅ 已售出", 0x95A5A6
+    return "📢 新文章", 0x2B7BE4
+
+
+def find_sp(text):
+    """抓出「70m SP」「5.5 mil sp」這類技能點數。"""
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*(m|mil|million|kk)?\s*\+?\s*sp\b", text, re.I)
+    if not m:
+        return None
+    num = float(m.group(1).replace(",", "."))
+    if not m.group(2) and num >= 100_000:  # 寫成完整數字
+        num /= 1_000_000
+    return f"{num:g}M SP"
+
+
+def find_price(text):
+    """抓出「90 B ISK」「3.5b ISK start」「B/O 40bil」這類價格（以 B = billion 為主）。"""
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*(b|bil|bill|billion)\b(?:\s*isk)?", text, re.I)
+    if not m:
+        return None
+    return f"{float(m.group(1).replace(',', '.')):g} B ISK"
+
+
+def build_embed(topic, post, preview=False):
     url = f"{BASE}/t/{topic['slug']}/{topic['id']}"
+    kind, color = post_kind(topic["title"])
+    text = post.get("text", "")
+    excerpt = text[:400].rstrip() + ("…" if len(text) > 400 else "")
+    quoted = "\n".join(f"> {line}" for line in excerpt.splitlines()[:8]) if excerpt else "> （沒有內文）"
+
+    fields = [{"name": "🏷️ 類型", "value": kind, "inline": True}]
+    sp = find_sp(topic["title"]) or find_sp(text)
+    if sp:
+        fields.append({"name": "🧠 技能點", "value": f"**{sp}**", "inline": True})
+    price = find_price(topic["title"]) or find_price(text)
+    if price:
+        fields.append({"name": "💰 價格", "value": f"**{price}**", "inline": True})
+    tags = [t["name"] if isinstance(t, dict) else str(t) for t in topic.get("tags") or []]
+    if tags:
+        fields.append({"name": "🔖 標籤", "value": " ".join(f"`{t}`" for t in tags), "inline": True})
+    if post.get("char_id"):
+        cid = post["char_id"]
+        fields.append({"name": "🔗 角色資料", "value": f"[EveWho](https://evewho.com/character/{cid}) · "
+                                                    f"[zKillboard](https://zkillboard.com/character/{cid}/)",
+                       "inline": False})
+
     embed = {
         "title": topic["title"][:256],
         "url": url,
-        "description": body[:500] + ("…" if len(body) > 500 else ""),
-        "color": 0x2B7BE4,
+        "description": quoted,
+        "color": color,
+        "fields": fields,
         "timestamp": topic["created_at"],
-        "footer": {"text": "EVE Character Bazaar"},
+        "footer": {"text": "EVE Character Bazaar" + ("（預覽，不是新文章）" if preview else "")},
     }
-    if author:
-        embed["author"] = {"name": author}
-    r = requests.post(WEBHOOK, json={"content": "🆕 New Character Bazaar post", "embeds": [embed]}, timeout=30)
+    if post.get("username"):
+        embed["author"] = {"name": post["name"], "url": f"{BASE}/u/{post['username']}"}
+        if post.get("avatar"):
+            embed["author"]["icon_url"] = post["avatar"]
+    if post.get("char_id"):
+        embed["thumbnail"] = {"url": f"https://images.evetech.net/characters/{post['char_id']}/portrait?size=128"}
+    return embed
+
+
+def notify(topic, preview=False):
+    embed = build_embed(topic, fetch_first_post(topic["id"]), preview)
+    payload = {"content": "🆕 **Character Bazaar 有新文章**" if not preview else "👀 **樣式預覽**",
+               "embeds": [embed]}
+    r = requests.post(WEBHOOK, json=payload, timeout=30)
     if r.status_code == 429:  # rate limited
         time.sleep(float(r.json().get("retry_after", 2)) + 0.5)
-        r = requests.post(WEBHOOK, json={"embeds": [embed]}, timeout=30)
+        r = requests.post(WEBHOOK, json=payload, timeout=30)
     r.raise_for_status()
 
 
@@ -92,6 +181,11 @@ def check_once():
 def main():
     if not WEBHOOK:
         sys.exit("Set DISCORD_WEBHOOK_URL (see README).")
+    if os.environ.get("PREVIEW") == "1":
+        # 把最新一篇發出來看樣式，不更新 seen.json
+        notify(max(fetch_topics(), key=lambda t: t["created_at"]), preview=True)
+        print("Preview sent.")
+        return
     once = "--once" in sys.argv
     while True:
         try:
