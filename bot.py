@@ -75,15 +75,24 @@ def fetch_first_post(topic_id):
 def post_kind(title):
     """從標題判斷是出售、收購還是拍賣。"""
     t = title.lower()
+    # 先看是不是已售出，避免「WTS ... SOLD」被當成出售
+    if re.search(r"\bsold\b|closed", t):
+        return "✅ Sold", 0x95A5A6
     if re.search(r"\bwts\b|for sale|selling", t):
         return "💰 Selling", 0x2ECC71
     if re.search(r"\bwtb\b|buying|looking for", t):
         return "🛒 Buying", 0xE67E22
     if re.search(r"\bwta\b|auction", t):
         return "🔨 Auction", 0x9B59B6
-    if re.search(r"\bsold\b|closed", t):
-        return "✅ Sold", 0x95A5A6
     return "📢 Post", 0x2B7BE4
+
+
+# 這些類型的文章不通知（收購、已售出）
+SKIP_KINDS = {"🛒 Buying", "✅ Sold"}
+
+
+def is_skipped_kind(topic):
+    return post_kind(topic["title"])[0] in SKIP_KINDS
 
 
 def find_sp(text):
@@ -171,6 +180,11 @@ def check_once():
             save_seen(seen)
             print(f"Skipped (excluded keyword): {t['title']}")
             continue
+        if is_skipped_kind(t):
+            seen.add(t["id"])
+            save_seen(seen)
+            print(f"Skipped ({post_kind(t['title'])[0]}): {t['title']}")
+            continue
         notify(t)
         seen.add(t["id"])
         save_seen(seen)  # save per topic so a crash never causes duplicates
@@ -183,7 +197,8 @@ def main():
         sys.exit("Set DISCORD_WEBHOOK_URL (see README).")
     if os.environ.get("PREVIEW") == "1":
         # 把最新一篇發出來看樣式，不更新 seen.json
-        notify(max(fetch_topics(), key=lambda t: t["created_at"]), preview=True)
+        candidates = [t for t in fetch_topics() if not is_skipped_kind(t)]
+        notify(max(candidates, key=lambda t: t["created_at"]), preview=True)
         print("Preview sent.")
         return
     once = "--once" in sys.argv
