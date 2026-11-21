@@ -76,14 +76,14 @@ def post_kind(title):
     """從標題判斷是出售、收購還是拍賣。"""
     t = title.lower()
     if re.search(r"\bwts\b|for sale|selling", t):
-        return "💰 出售", 0x2ECC71
+        return "💰 Selling", 0x2ECC71
     if re.search(r"\bwtb\b|buying|looking for", t):
-        return "🛒 收購", 0xE67E22
+        return "🛒 Buying", 0xE67E22
     if re.search(r"\bwta\b|auction", t):
-        return "🔨 拍賣", 0x9B59B6
+        return "🔨 Auction", 0x9B59B6
     if re.search(r"\bsold\b|closed", t):
-        return "✅ 已售出", 0x95A5A6
-    return "📢 新文章", 0x2B7BE4
+        return "✅ Sold", 0x95A5A6
+    return "📢 Post", 0x2B7BE4
 
 
 def find_sp(text):
@@ -110,21 +110,21 @@ def build_embed(topic, post, preview=False):
     kind, color = post_kind(topic["title"])
     text = post.get("text", "")
     excerpt = text[:400].rstrip() + ("…" if len(text) > 400 else "")
-    quoted = "\n".join(f"> {line}" for line in excerpt.splitlines()[:8]) if excerpt else "> （沒有內文）"
+    quoted = "\n".join(f"> {line}" for line in excerpt.splitlines()[:8]) if excerpt else "> (no content)"
 
-    fields = [{"name": "🏷️ 類型", "value": kind, "inline": True}]
+    fields = [{"name": "🏷️ Type", "value": kind, "inline": True}]
     sp = find_sp(topic["title"]) or find_sp(text)
     if sp:
-        fields.append({"name": "🧠 技能點", "value": f"**{sp}**", "inline": True})
+        fields.append({"name": "🧠 Skill Points", "value": f"**{sp}**", "inline": True})
     price = find_price(topic["title"]) or find_price(text)
     if price:
-        fields.append({"name": "💰 價格", "value": f"**{price}**", "inline": True})
+        fields.append({"name": "💰 Price", "value": f"**{price}**", "inline": True})
     tags = [t["name"] if isinstance(t, dict) else str(t) for t in topic.get("tags") or []]
     if tags:
-        fields.append({"name": "🔖 標籤", "value": " ".join(f"`{t}`" for t in tags), "inline": True})
+        fields.append({"name": "🔖 Tags", "value": " ".join(f"`{t}`" for t in tags), "inline": True})
     if post.get("char_id"):
         cid = post["char_id"]
-        fields.append({"name": "🔗 角色資料", "value": f"[EveWho](https://evewho.com/character/{cid}) · "
+        fields.append({"name": "🔗 Character", "value": f"[EveWho](https://evewho.com/character/{cid}) · "
                                                     f"[zKillboard](https://zkillboard.com/character/{cid}/)",
                        "inline": False})
 
@@ -135,7 +135,7 @@ def build_embed(topic, post, preview=False):
         "color": color,
         "fields": fields,
         "timestamp": topic["created_at"],
-        "footer": {"text": "EVE Character Bazaar" + ("（預覽，不是新文章）" if preview else "")},
+        "footer": {"text": "EVE Character Bazaar" + (" · Preview (not a new post)" if preview else "")},
     }
     if post.get("username"):
         embed["author"] = {"name": post["name"], "url": f"{BASE}/u/{post['username']}"}
@@ -148,7 +148,7 @@ def build_embed(topic, post, preview=False):
 
 def notify(topic, preview=False):
     embed = build_embed(topic, fetch_first_post(topic["id"]), preview)
-    payload = {"content": "🆕 **Character Bazaar 有新文章**" if not preview else "👀 **樣式預覽**",
+    payload = {"content": "🆕 **New Character Bazaar post**" if not preview else "👀 **Style preview**",
                "embeds": [embed]}
     r = requests.post(WEBHOOK, json=payload, timeout=30)
     if r.status_code == 429:  # rate limited
